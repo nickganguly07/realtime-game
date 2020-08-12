@@ -1,185 +1,211 @@
-import React, { useEffect, useState } from 'react';
+import React, { Component } from 'react';
 import './App.scss';
 import firebase from 'firebase';
 import { config } from './config';
 
-export const App = (props: any) => {
-	const maxLength = 40; // (Typically, the lower this number, the harder the puzzle.)
+export default class App extends Component<any, any> {
+	private maxLength = 40;
+	private allowedStrikes = 3;
+	private defaultStrikes = new Array(this.allowedStrikes).fill({ icon: '⚪', guess: '' });
+	private isClient = (new URL(window.location.href)).searchParams.get("isClient") !== null;
 
-	const allowedStrikes = 3; //If you set this and maxLength both too high, the puzzle will be impossible to lose.
+	constructor(props: any) {
+		super(props);
 
-	const defaultStrikes = new Array(allowedStrikes).fill({ icon: '⚪', guess: '' });
+		this.state = {
+			letters: Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZ'),
+			quotes: [], //Filled by the mounted hook
+			currentQuote: '', //Filled by the mounted hook
+			quoteAuthor: '',
+			guesses: [],
+			strikes: [ ...this.defaultStrikes ],
+			gameOver: false
+		};
+	}
 
-	const url = new URL(window.location.href);
-	const isClient = url.searchParams.get("isClient") !== null;
-
-	const [ letters, setLetters ] = useState<Array<any>>(Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZ'));
-	const [ quotes, setQuotes ] = useState<Array<any>>([]);
-	const [ guesses, setGuesses ] = useState<Array<string>>([]);
-	const [ strikes, setStrikes ] = useState<Array<any>>([ ...defaultStrikes ]);
-	const [ gameOver, setGameOver ] = useState<boolean>(false);
-	const [ currentQuote, setCurrentQuote ] = useState<string>('');
-	const [ quoteAuthor, setQuoteAuthor ] = useState<string>('');
-
-	useEffect(() => {
+	componentDidMount() {
+		console.log('did mount');
 		firebase.initializeApp(config);
+		firebase.database().ref('/demo').remove().then(() => {
+			fetch('https://type.fit/api/quotes')
+				.then((response) => response.json())
+				.then((fetchedQuotes) => {
+					fetchedQuotes = fetchedQuotes.filter((quote: any) => quote.text.length <= this.maxLength);// Get rid of any quotes that are too long
+					this.setState({
+						quotes: fetchedQuotes,
+					});
+					this.pickAQuote();
 
-		fetch('https://type.fit/api/quotes')
-			.then((response) => response.json())
-			.then((fetchedQuotes) => {
-				fetchedQuotes = fetchedQuotes.filter((quote: any) => quote.text.length <= maxLength);// Get rid of any quotes that are too long
-				setQuotes(fetchedQuotes);
-				pickAQuote(fetchedQuotes);
+					if (this.isClient) {
+						firebase.database().ref('/demo').on('child_added', (event) => {
+							if (event.exists()) {
+								console.log(event.val());
+								this.guess(event.val().letter);
+							}
+						});
+					}
+				});
+		});
+	}
 
-				// const url = new URL(window.location.href);
-				// if (url.searchParams.get("isClient") !== null) {
-				// 	firebase.database().ref('/demo').on('child_added', (event) => {
-				// 		if (event.exists()) {
-				// 			console.log(event.val());
-				// 			guess(event.val().letter);
-				// 		}
-				// 	});
-				// }
-			});
-	}, []);
-
-
-	const handleKeyPress = (event: any) => {
+	private handleKeyPress = (event: any) => {
 		const key: string = event.key.toUpperCase()
-		if (key.length === 1 && key.match(/[a-zA-Z]/) && !guesses.includes(key)) {
+		if (key.length === 1 && key.match(/[a-zA-Z]/) && !this.state.guesses.includes(key)) {
 			console.log(key)
-			guess(key)
+			this.guess(key)
 		}
 	};
 
-	const pickAQuote = (fetchedQuotes: Array<any> = []) => {
-		console.log(quotes);
-		let qu = quotes;
-		if (!quotes.length) {
-			qu = fetchedQuotes;
-		}
-		const random = Math.floor(Math.random() * qu.length)
-		setCurrentQuote(qu[random].text.toUpperCase());
-		setQuoteAuthor(qu[random].author);
+	private pickAQuote = () => {
+		console.log(this.state.quotes);
+		const random = Math.floor(Math.random() * this.state.quotes.length)
+		this.setState({
+			currentQuote: this.state.quotes[random].text.toUpperCase(),
+			quoteAuthor: this.state.quotes[random].author,
+		});
 	};
 
-	const isRevealed = (letter: string) => {
+	private isRevealed = (letter: string) => {
 		if (!letter.match(/[a-zA-Z\s]/)) {
 			return letter
 		}
-		return guesses.includes(letter) || gameOver ? letter : '_'
+		return this.state.guesses.includes(letter) || this.state.gameOver ? letter : '_'
 	};
 
-	const guess = (letter: string) => {
-		// const url = new URL(window.location.href);
-		// if (url.searchParams.get("isClient") === null) {
-		// 	const key = firebase.database().ref('/demo').push().key;
-		// 	firebase.database().ref(`/demo/${ key }`).set({
-		// 		letter
-		// 	}).then(_ => {
-		// 	});
-		// } else {
+	private guess = (letter: string) => {
+		if (!this.isClient) {
+			const key = firebase.database().ref('/demo').push().key;
+			firebase.database().ref(`/demo/${ key }`).set({
+				letter
+			}).then(_ => {
+			});
+
+			return;
+		}
+
 		console.log(letter);
-		setGuesses([ ...guesses, letter ]);
-		if (!currentQuote.includes(letter)) {
-			let oldStrikes = strikes;
+		this.setState({
+			guesses: [ ...this.state.guesses, letter ],
+		});
+		if (!this.state.currentQuote.includes(letter)) {
+			let oldStrikes = this.state.strikes;
 			oldStrikes.pop();
-			setStrikes([ { icon: '🚫', guess: letter }, ...oldStrikes ]);
+			this.setState({
+				strikes: [ { icon: '🚫', guess: letter }, ...oldStrikes ],
+			});
 		}
-		if (strikeout() || puzzleComplete()) {
-			setGameOver(true);
-			// if (puzzleComplete()) fireEmAll();
+		if (this.strikeout() || this.puzzleComplete()) {
+			this.setState({
+				gameOver: true,
+			});
 		}
-		// }
 	};
 
-	const newGame = () => {
+	private newGame = async () => {
 		const confirmation = window.confirm('End this game and start a new one?')
 		if (!confirmation) return
-		pickAQuote()
-		setGuesses([]);
-		setStrikes([ ...defaultStrikes ]);
-		setGameOver(false);
+
+		await firebase.database().ref('/demo').remove();
+		this.pickAQuote()
+		this.setState({
+			guesses: [],
+			strikes: [ ...this.defaultStrikes ],
+			gameOver: false,
+		});
 	};
 
-	const splitQuote = () => {
-		return currentQuote.split(' ')
+	private splitQuote = () => {
+		return this.state.currentQuote.split(' ');
 	};
-	const badGuesses = () => {
-		return strikes.filter(s => s.guess).map(s => s.guess)
+	private badGuesses = () => {
+		return this.state.strikes.filter((s: any) => s.guess).map((s: any) => s.guess);
 	};
-	const strikeout = () => {
-		return badGuesses().length >= allowedStrikes
+	private strikeout = () => {
+		return this.badGuesses().length >= this.allowedStrikes;
 	};
-	const puzzleComplete = () => {
-		return unrevealed() === 0;
+	private puzzleComplete = () => {
+		return this.unrevealed() === 0;
 	};
-	const unrevealed = () => {
-		return [ ...currentQuote ].filter(letter => {
-			return letter.match(/[a-zA-Z]/) && !guesses.includes(letter)
-		}).length
+	private unrevealed = () => {
+		return this.state.currentQuote.split('').filter((letter: string) => {
+			return letter.match(/[a-zA-Z]/) && !this.state.guesses.includes(letter)
+		}).length;
 	};
-	const message = () => {
-		if (!gameOver) {
+	private message = () => {
+		if (!this.state.gameOver) {
 			return '☝️ Pick a letter'
-		} else if (strikeout()) {
+		} else if (this.strikeout()) {
 			return '❌ You lost this round. Try again?'
-		} else if (puzzleComplete()) {
+		} else if (this.puzzleComplete()) {
 			return '🎉 You win!'
 		}
 		//You can never be too safe ¯\_(ツ)_/¯
 		return '😬 Unforeseen error state, maybe try a new game?'
 	};
 
-	return (
-		<main id="app" onKeyUp={ handleKeyPress }>
-			<div className="container">
-				<h3>Simon Realtime Demo</h3>
-				<p id="quote" className={ (strikeout() ? 'strike ' : '') + (puzzleComplete() ? 'highlight' : '') }>
-					{ splitQuote().map((word, index) => {
-						return (
-							<span key={ `word-${ index }` }>
+	render() {
+		return (
+			<main id="app" onKeyUp={ this.handleKeyPress }>
+				<div className="container">
+					<h3>Simon Realtime Demo</h3>
+					{ this.isClient && (
+						<>
+							<p id="quote"
+							   className={ (this.strikeout() ? 'strike ' : '') + (this.puzzleComplete() ? 'highlight' : '') }>
+								{ this.splitQuote().map((word: string, index: number) => {
+									return (
+										<span key={ `word-${ index }` }>
 								{ word.split('').map((letter, letterIndex) => {
-									return isRevealed(letter);
+									return this.isRevealed(letter);
 								}) }
 							</span>
-						);
-					}) }
-					{ gameOver && (<small>
-						—{ quoteAuthor }
-					</small>) }
-				</p>
+									);
+								}) }
+								{ this.state.gameOver && (<small>
+									—{ this.state.quoteAuthor }
+								</small>) }
+							</p>
 
-				<div className="status">
-					<h2>Strikes:</h2>
-					<ul className="status">
-						{ strikes.map((strike, index) => (
-							<li key={ `strike-${ index }` }>{ strike.icon }</li>
-						)) }
-					</ul>
-				</div>
+							<div className="status">
+								<h2>Strikes:</h2>
+								<ul className="status">
+									{ this.state.strikes.map((strike: any, index: number) => (
+										<li key={ `strike-${ index }` }>{ strike.icon }</li>
+									)) }
+								</ul>
+							</div>
+						</>
+					) }
 
-				<div id="button-board">
-					{ letters.map((letter, index) => (
-						<button
-							className={ (badGuesses().includes(letter) ? 'strike ' : '') + (guesses.includes(letter) ? 'highlight' : '') }
-							disabled={ guesses.includes(letter) || gameOver }
-							onClick={ event => guess(letter) } key={ `button-${ index }` }>
+					{ !this.isClient && (
+						<div id="button-board">
+							{ this.state.letters.map((letter: string, index: number) => (
+								<button
+									className={ (this.badGuesses().includes(letter) ? 'strike ' : '') + (this.state.guesses.includes(letter) ? 'highlight' : '') }
+									disabled={ this.state.guesses.includes(letter) || this.state.gameOver }
+									onClick={ event => this.guess(letter) } key={ `button-${ index }` }>
 								<span
-									className={ 'letter ' + guesses.includes(letter) ? 'riser' : '' }>{ letter }</span>
-							<span className="background"></span>
-						</button>
-					)) }
-				</div>
+									className={ 'letter ' + this.state.guesses.includes(letter) ? 'riser' : '' }>{ letter }</span>
+									<span className="background"></span>
+								</button>
+							)) }
+						</div>
+					) }
 
-				<div className="status">
-					<p>{ message() }</p>
-				</div>
+					{ this.isClient && (
+						<>
+							<div className="status">
+								<p>{ this.message() }</p>
+							</div>
 
-				<button id="new-game" className={ gameOver ? 'highlight' : '' } onClick={ event => newGame() }>New
-					game
-				</button>
-			</div>
-		</main>
-	);
-};
+							<button id="new-game" className={ this.state.gameOver ? 'highlight' : '' }
+									onClick={ event => this.newGame() }>New
+								game
+							</button>
+						</>
+					) }
+				</div>
+			</main>
+		);
+	}
+}
