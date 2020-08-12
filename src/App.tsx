@@ -134,6 +134,7 @@ export const App = (props: any) => {
 	return (
 		<main id="app" onKeyUp={ handleKeyPress }>
 			<div className="container">
+				<h3>Simon Realtime Demo</h3>
 				<p id="quote" className={ (strikeout() ? 'strike ' : '') + (puzzleComplete() ? 'highlight' : '') }>
 					{ splitQuote().map((word, index) => {
 						return (
